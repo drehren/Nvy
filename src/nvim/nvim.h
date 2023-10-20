@@ -5,14 +5,16 @@ enum NvimRequest : uint8_t {
 	nvim_input = 1,
 	nvim_input_mouse = 2,
 	nvim_eval = 3,
-	nvim_command = 4
+	nvim_command = 4,
+	nvim_get_data_path = 5,
 };
 constexpr const char *NVIM_REQUEST_NAMES[] {
 	"nvim_get_api_info",
 	"nvim_input",
 	"nvim_input_mouse",
 	"nvim_eval",
-	"nvim_command"
+	"nvim_command",
+	"nvim_eval",
 };
 enum NvimOutboundNotification : uint8_t {
 	nvim_ui_attach = 0,
@@ -44,6 +46,7 @@ constexpr int MAX_MPACK_OUTBOUND_MESSAGE_SIZE = 4096;
 struct Nvim {
 	int64_t next_msg_id;
 	Vec<NvimRequest> msg_id_to_method;
+	char settings_path[MAX_PATH];
 
 	HWND hwnd;
 	HANDLE stdin_read;
@@ -58,6 +61,7 @@ void NvimInitialize(Nvim *nvim, wchar_t *command_line, HWND hwnd);
 void NvimShutdown(Nvim *nvim);
 
 void NvimParseConfig(Nvim *nvim, mpack_node_t config_node, Vec<char> *guifont_out);
+void NvimReadSettings(Nvim *nvim, mpack_node_t config_node);
 
 void NvimSendCommand(Nvim *nvim, const char *command);
 void NvimSendUIAttach(Nvim *nvim, int grid_rows, int grid_cols);

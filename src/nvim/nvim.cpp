@@ -1,6 +1,11 @@
 #include "nvim.h"
 #include "common/mpack_helper.h"
 #include "third_party/mpack/mpack.h"
+#include <corecrt_malloc.h>
+#include <minwindef.h>
+#include <stdio.h>
+#include <string.h>
+#include <winuser.h>
 
 constexpr int Megabytes(int n) {
     return 1024 * 1024 * n;
@@ -143,6 +148,15 @@ void NvimInitialize(Nvim *nvim, wchar_t *command_line, HWND hwnd) {
 	mpack_finish_array(&writer);
 	size = MPackFinishMessage(&writer);
 	MPackSendData(nvim->stdin_write, data, size);
+
+	// Query stdpath to find the users init.vim
+	mpack_writer_init(&writer, data, MAX_MPACK_OUTBOUND_MESSAGE_SIZE);
+	MPackStartRequest(RegisterRequest(nvim, nvim_get_data_path), NVIM_REQUEST_NAMES[nvim_get_data_path], &writer);
+	mpack_start_array(&writer, 1);
+	mpack_write_cstr(&writer, "stdpath('data')");
+	mpack_finish_array(&writer);
+	size = MPackFinishMessage(&writer);
+	MPackSendData(nvim->stdin_write, data, size);
 }
 
 void NvimShutdown(Nvim *nvim) {
@@ -225,6 +239,124 @@ void NvimParseConfig(Nvim *nvim, mpack_node_t config_node, Vec<char> *guifont_ou
 	}
 
 	free(buffer);
+}
+
+size_t KeyLength(const char* txt, size_t txt_len) {
+	if (txt_len == 0) {
+		txt_len = strlen(txt);
+	}
+
+	size_t key_len = 0;
+	for (int i = 0; i < txt_len; i++) {
+		if ((txt[i] >= 'a' && txt[i] <= 'z')
+			|| (txt[i] >= 'A' && txt[i] <= 'Z')
+			|| (i > 0 && txt[i] >= '0' && txt[i] <= '9')
+			|| (txt[i] == '_')) {
+			key_len++;
+			continue;
+		}
+		break;
+	}
+
+	return key_len;
+}
+
+const char* ValueStart(const char* txt, size_t max_len) {
+	if (max_len == 0) {
+		max_len = strlen(txt);
+	}
+
+	// First need to find =
+	size_t i = 0;
+	for (; i < max_len; i++) {
+		if (txt[i] == '=') {
+			break;
+		}
+	}
+
+	// Now we can find the start of the value
+	for (; i < max_len; i++) {
+		if ((txt[i] >= 'a' && txt[i] <= 'z')
+			|| (txt[i] >= 'A' && txt[i] <= 'Z')
+			|| (txt[i] >= '0' && txt[i] <= '9')
+			|| (txt[i] == '_')) {
+			return txt + i;
+		}
+	}
+	return NULL;
+}
+
+void NvimReadSettings(Nvim* nvim, mpack_node_t data_node) {
+	// We will look for a nvy.settings file
+	
+	const char *data_path = mpack_node_str(data_node);
+	size_t data_path_strlen = mpack_node_strlen(data_node);
+	
+	char *path = nvim->settings_path;
+	strncpy_s(path, MAX_PATH, data_path, data_path_strlen);
+	strcat_s(path, MAX_PATH - data_path_strlen - 1, "\\nvy.settings");
+
+	HANDLE data_file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+		OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+	if (data_file == INVALID_HANDLE_VALUE) {
+		// file does not exist.. 
+		return;
+	}
+	
+	char *buffer;
+	LARGE_INTEGER file_size;
+	if (!GetFileSizeEx(data_file, &file_size)) {
+		CloseHandle(data_file);
+		return;
+	}
+	buffer = static_cast<char *>(malloc(file_size.QuadPart));
+
+	DWORD bytes_read;
+	if (!ReadFile(data_file, buffer, file_size.QuadPart, &bytes_read, NULL)) {
+		CloseHandle(data_file);
+		free(buffer);
+		return;
+	}
+	CloseHandle(data_file);
+
+	char *strtok_context;
+	char *line = strtok_s(buffer, "\r\n", &strtok_context);
+
+	WINDOWPLACEMENT placement {
+		.length = sizeof(WINDOWPLACEMENT),
+	};
+	GetWindowPlacement(nvim->hwnd, &placement);
+	
+	while (line) {
+		size_t line_len = strlen(line);
+		const char* key = line;
+		size_t key_len = KeyLength(key, line_len);
+		size_t value_len = line_len - key_len;
+		const char* value = ValueStart(line + key_len, value_len);
+
+		if (value) {
+			// now switch per "key"
+			if (strncmp(key, "left", key_len) == 0) {
+				_snscanf_s(value, value_len, "%ld", &placement.rcNormalPosition.left);
+			} else if (strncmp(key, "right", key_len) == 0) {
+				_snscanf_s(value, value_len, "%ld", &placement.rcNormalPosition.right);
+			} else if (strncmp(key, "top", key_len) == 0) {
+				_snscanf_s(value, value_len, "%ld", &placement.rcNormalPosition.top);
+			} else if (strncmp(key, "bottom", key_len) == 0) {
+				_snscanf_s(value, value_len, "%ld", &placement.rcNormalPosition.bottom);
+			} else if (strncmp(key, "win_state", key_len) == 0) {
+				_snscanf_s(value, value_len, "%d", &placement.showCmd);
+			}
+		}
+
+		line = strtok_s(NULL, "\r\n", &strtok_context);
+	}
+
+	free(buffer);
+
+	// now we'll change things ! yey.. let's hope this works...
+	SetWindowPlacement(nvim->hwnd, &placement);	
 }
 
 void NvimSendUIAttach(Nvim *nvim, int grid_rows, int grid_cols) {
@@ -628,8 +760,8 @@ void NvimKillFocus(Nvim *nvim) {
 	size_t size = MPackFinishMessage(&writer);
 	MPackSendData(nvim->stdin_write, data, size);
 }
-void NvimQuit(Nvim *nvim)
-{
+
+void NvimQuit(Nvim *nvim) {
 	const char *quit_command = "qa";
 
 	char data[MAX_MPACK_OUTBOUND_MESSAGE_SIZE];
@@ -641,4 +773,38 @@ void NvimQuit(Nvim *nvim)
 	mpack_finish_array(&writer);
 	size_t size = MPackFinishMessage(&writer);
 	MPackSendData(nvim->stdin_write, data, size);
+
+	// write down settings
+	if (nvim->settings_path) {
+		HANDLE file_handle = CreateFileA(nvim->settings_path, GENERIC_WRITE, 0, NULL,
+			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+			return;
+		}
+		
+		WINDOWPLACEMENT placement {
+			.length = sizeof(WINDOWPLACEMENT),
+		};
+		GetWindowPlacement(nvim->hwnd, &placement);
+		
+		char buffer[128];
+		DWORD bytes = 0;
+
+		_snprintf_s(buffer, 128, 127, "left=%ld\n", placement.rcNormalPosition.left);
+		WriteFile(file_handle, buffer, strlen(buffer), &bytes, NULL);
+
+		_snprintf_s(buffer, 128, 127, "right=%ld\n", placement.rcNormalPosition.right);
+		WriteFile(file_handle, buffer, strlen(buffer), &bytes, NULL);
+
+		_snprintf_s(buffer, 128, 127, "top=%ld\n", placement.rcNormalPosition.top);
+		WriteFile(file_handle, buffer, strlen(buffer), &bytes, NULL);
+		
+		_snprintf_s(buffer, 128, 127, "bottom=%ld\n", placement.rcNormalPosition.bottom);
+		WriteFile(file_handle, buffer, strlen(buffer), &bytes, NULL);
+
+		_snprintf_s(buffer, 128, 127, "win_state=%d\n", placement.showCmd);
+		WriteFile(file_handle, buffer, strlen(buffer), &bytes, NULL);
+
+		CloseHandle(file_handle);
+	}
 }

@@ -54,6 +54,9 @@ void ProcessMPackMessage(Context *context, mpack_tree_t *tree) {
 			int64_t api_level = mpack_node_map_cstr(version_map, "api_level").data->value.i;
 			assert(api_level > 6);
 		} break;
+    case NvimRequest::nvim_get_data_path: {
+        NvimReadSettings(context->nvim, result.params);
+    } break;
 		case NvimRequest::nvim_eval: {
 			Vec<char> guifont_buffer;
 			NvimParseConfig(context->nvim, result.params, &guifont_buffer);
@@ -100,10 +103,10 @@ void ProcessMPackMessage(Context *context, mpack_tree_t *tree) {
 				ToggleFullscreen(context->hwnd, context);
 			}
 		} break;
-        case NvimRequest::nvim_input:
-        case NvimRequest::nvim_input_mouse:
-        case NvimRequest::nvim_command: {
-        } break;
+		case NvimRequest::nvim_input:
+		case NvimRequest::nvim_input_mouse:
+		case NvimRequest::nvim_command: {
+		} break;
 		}
 	}
 	else if (result.type == MPackMessageType::Notification) {
@@ -468,10 +471,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance, PWSTR p_cmd_lin
 		.style = CS_HREDRAW | CS_VREDRAW,
 		.lpfnWndProc = WndProc,
 		.hInstance = instance,
-        .hIcon = static_cast<HICON>(LoadImage(GetModuleHandle(NULL), L"NVIM_ICON", IMAGE_ICON, LR_DEFAULTSIZE, LR_DEFAULTSIZE, 0)),
+		.hIcon = static_cast<HICON>(LoadImage(GetModuleHandle(NULL), L"NVIM_ICON", IMAGE_ICON, LR_DEFAULTSIZE, LR_DEFAULTSIZE, 0)),
 		.hCursor = LoadCursor(NULL, IDC_ARROW),
 		.lpszClassName = window_class_name,
-        .hIconSm = static_cast<HICON>(LoadImage(GetModuleHandle(NULL), L"NVIM_ICON", IMAGE_ICON, LR_DEFAULTSIZE, LR_DEFAULTSIZE, 0))
+		.hIconSm = static_cast<HICON>(LoadImage(GetModuleHandle(NULL), L"NVIM_ICON", IMAGE_ICON, LR_DEFAULTSIZE, LR_DEFAULTSIZE, 0))
 	};
 
 	if (!RegisterClassEx(&window_class)) {
@@ -512,6 +515,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance, PWSTR p_cmd_lin
 	if (hwnd == NULL) return 1;
 	context.hwnd = hwnd;
 	context.hkl = GetKeyboardLayout(0);
+  GetWindowPlacement(hwnd, &context.saved_window_placement);
 	RECT window_rect;
 	DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &window_rect, sizeof(RECT));
 	HMONITOR monitor = MonitorFromPoint({window_rect.left, window_rect.top}, MONITOR_DEFAULTTONEAREST);

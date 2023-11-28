@@ -5,14 +5,16 @@ enum NvimRequest : uint8_t {
 	nvim_input = 1,
 	nvim_input_mouse = 2,
 	nvim_eval = 3,
-	nvim_command = 4
+	nvim_command = 4,
+	nvim_exec2 = 5
 };
 constexpr const char *NVIM_REQUEST_NAMES[] {
 	"nvim_get_api_info",
 	"nvim_input",
 	"nvim_input_mouse",
 	"nvim_eval",
-	"nvim_command"
+	"nvim_command",
+	"nvim_exec2"
 };
 enum NvimOutboundNotification : uint8_t {
 	nvim_ui_attach = 0,

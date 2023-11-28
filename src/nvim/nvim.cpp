@@ -151,12 +151,16 @@ void NvimInitialize(Nvim *nvim, wchar_t *command_line, HWND hwnd) {
 		return;
 	}
 
-	// Setup neovim to send a blocking request so we can finalize seting up before
-	// buffer
+	// Setup neovim
 	mpack_writer_init(&writer, data, MAX_MPACK_OUTBOUND_MESSAGE_SIZE);
-	MPackStartRequest(RegisterRequest(nvim, nvim_command), NVIM_REQUEST_NAMES[nvim_command], &writer);
-	mpack_start_array(&writer, 1);
-	mpack_write_cstr(&writer, "autocmd VimEnter * call rpcrequest(1, 'vimenter')");
+	MPackStartRequest(RegisterRequest(nvim, nvim_exec2), NVIM_REQUEST_NAMES[nvim_exec2], &writer);
+	mpack_start_array(&writer, 2);
+	mpack_write_cstr(&writer,
+		"command -nargs=1 -complete=file NvyAddRecent :call rpcnotify(1, 'addrecent', expand(<q-args>))\n"
+		"autocmd VimEnter * call rpcrequest(1, 'vimenter')\n"
+	);
+	mpack_start_map(&writer, 0);
+	mpack_finish_map(&writer);
 	mpack_finish_array(&writer);
 	size = MPackFinishMessage(&writer);
 	if (!MPackSendData(nvim->stdin_write, data, size)) {
@@ -166,8 +170,7 @@ void NvimInitialize(Nvim *nvim, wchar_t *command_line, HWND hwnd) {
 	if (mpack_tree_error(tree_reader)) {
 		return;
 	}
-	result = MPackExtractMessageResult(tree_reader); // get the result just in case...
-
+	MPackExtractMessageResult(tree_reader); // get the result just in case...
 	mpack_tree_destroy(tree_reader);
 	free(tree_reader);
 
@@ -534,7 +537,7 @@ void NvimQueryConfig(Nvim *nvim) {
 	mpack_start_array(&writer, 1);
 	mpack_write_cstr(&writer, "stdpath('config')");
 	mpack_finish_array(&writer);
-    size_t size = MPackFinishMessage(&writer);
+	size_t size = MPackFinishMessage(&writer);
 	MPackSendData(nvim->stdin_write, data, size);
 }
 

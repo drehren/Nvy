@@ -16,6 +16,7 @@ set(Nvy_HEADERS
     "src/renderer/glyph_renderer.h"
     "src/renderer/renderer.h"
     "src/third_party/mpack/mpack.h"
+    "src/jumplist/jumplist.h"
 )
 
 set(Nvy_SOURCES
@@ -24,6 +25,7 @@ set(Nvy_SOURCES
     "src/renderer/glyph_renderer.cpp"
     "src/renderer/renderer.cpp"
     "src/third_party/mpack/mpack.c"
+    "src/jumplist/jumplist.cpp"
 )
 
 target_sources(Nvy PUBLIC
@@ -43,6 +45,8 @@ target_link_libraries(Nvy PUBLIC
     Shcore.lib
     Dwmapi.lib
     imm32.lib
+    Shlwapi.lib
+    Pathcch.lib
 )
 
 target_precompile_headers(Nvy PUBLIC
@@ -58,6 +62,7 @@ target_precompile_headers(Nvy PUBLIC
     <dwrite_3.h>
     <shellscalingapi.h>
     <dwmapi.h>
+    <shobjidl_core.h>
     <imm.h>
     
     "src/third_party/mpack/mpack.h"

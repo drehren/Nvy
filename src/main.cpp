@@ -1,13 +1,15 @@
 #include "nvim/nvim.h"
 #include "renderer/renderer.h"
+#include "jumplist/jumplist.h"
 
 struct Context {
 	bool start_maximized;
 	bool start_fullscreen;
-    bool disable_fullscreen;
+	bool disable_fullscreen;
 	HWND hwnd;
 	Nvim *nvim;
 	Renderer *renderer;
+	JumpList *jumplist;
 	bool dead_char_pending;
 	bool xbuttons[2];
 	float buffered_scroll_amount;
@@ -64,17 +66,20 @@ void ProcessMPackMessage(Context *context, mpack_tree_t *tree) {
 					free(command);
 				}
 			}
-        } break;
+		} break;
 		case NvimRequest::vim_get_api_info:
 		case NvimRequest::nvim_input:
 		case NvimRequest::nvim_input_mouse:
-		case NvimRequest::nvim_command: {
+		case NvimRequest::nvim_command: 
+		case NvimRequest::nvim_exec2: {
 		} break;
 		}
 	} break;
 	case MPackMessageType::Notification: {
 		if (MPackMatchString(result.notification.name, "redraw")) {
 			RendererRedraw(context->renderer, result.params, context->start_maximized);
+		} else if (MPackMatchString(result.request.method, "addrecent")) {
+			JumpListAdd(context->jumplist, result.params);
 		}
 	} break;
 	case MPackMessageType::Request: {
@@ -375,14 +380,21 @@ BOOL ShouldUseDarkMode()
 }
 
 int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _In_ LPWSTR p_cmd_line, _In_ int n_cmd_show) {
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE | COINIT_SPEED_OVER_MEMORY);
+	if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE) {
+		return 1;
+	}
+
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
+	
+	SetCurrentProcessExplicitAppUserModelID(APP_ID);	
 
 	int n_args;
 	LPWSTR *cmd_line_args = CommandLineToArgvW(GetCommandLineW(), &n_args);
 	bool start_maximized = false;
 	bool start_fullscreen = false;
 	bool disable_ligatures = false;
-    bool disable_fullscreen = false;
+	bool disable_fullscreen = false;
 	float linespace_factor = 1.0f;
 	int64_t start_rows = 0;
 	int64_t start_cols = 0;
@@ -464,17 +476,19 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 
 	Nvim nvim {};
 	Renderer renderer {};
+	JumpList *jumplist = JumpListInit();
 	Context context {
 		.start_maximized = start_maximized,
 		.start_fullscreen = start_fullscreen,
-        .disable_fullscreen = disable_fullscreen,
+		.disable_fullscreen = disable_fullscreen,
 		.nvim = &nvim,
 		.renderer = &renderer,
+		.jumplist = jumplist,
 		.saved_window_placement = WINDOWPLACEMENT { .length = sizeof(WINDOWPLACEMENT) }
 	};
 
 	HWND hwnd = CreateWindowEx(
-		WS_EX_ACCEPTFILES,
+		WS_EX_ACCEPTFILES, 
 		window_class_name,
 		window_title,
 		WS_OVERLAPPEDWINDOW,
@@ -546,6 +560,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 		}
 	}
 
+	JumpListDestroy(&jumplist);
 	RendererShutdown(&renderer);
 	NvimShutdown(&nvim);
 
@@ -579,6 +594,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 
 	UnregisterClass(window_class_name, instance);
 	DestroyWindow(hwnd);
+	CoUninitialize();
 
 	return nvim.exit_code;
 }

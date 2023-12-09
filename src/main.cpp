@@ -1,5 +1,6 @@
 #include "nvim/nvim.h"
 #include "renderer/renderer.h"
+#include <winuser.h>
 
 struct Context {
 	bool start_maximized;
@@ -105,6 +106,49 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	}
 
 	switch (msg) {
+	case WM_SIZING: {
+		if (!(GetAsyncKeyState(VK_SHIFT) & 0x8000)) { return FALSE; }
+		RECT *wndrc = reinterpret_cast<RECT *>(lparam);
+		RECT frm {};
+		AdjustWindowRectExForDpi(&frm, WS_OVERLAPPEDWINDOW, false, 0, context->saved_dpi_scaling);
+
+		auto [r, c] = RendererPixelsToGridSize(
+			context->renderer,
+			wndrc->right - wndrc->left - (frm.right - frm.left),
+			wndrc->bottom - wndrc->top - (frm.bottom - frm.top));
+		auto [w, h] = RendererGridToPixelSize(context->renderer, r, c);
+
+		switch (wparam) {
+		case WMSZ_TOP: 
+			wndrc->top = wndrc->bottom - h;
+			break;
+		case WMSZ_LEFT:
+			wndrc->left = wndrc->right - w;
+			break;
+		case WMSZ_RIGHT:
+			wndrc->right = wndrc->left + w;
+			break;
+		case WMSZ_BOTTOM:
+			wndrc->bottom = wndrc->top + h;
+			break;
+		case WMSZ_TOPLEFT:
+			wndrc->top = wndrc->bottom - h;
+			wndrc->left = wndrc->right - w;
+			break;
+		case WMSZ_TOPRIGHT:
+			wndrc->top = wndrc->bottom - h;
+			wndrc->right = wndrc->left + w;
+			break;
+		case WMSZ_BOTTOMLEFT:
+			wndrc->bottom = wndrc->top + h;
+			wndrc->left = wndrc->right - w;
+			break;
+		case WMSZ_BOTTOMRIGHT:
+			wndrc->bottom = wndrc->top + h;
+			wndrc->right = wndrc->left + w;
+			break;
+		}
+	} return TRUE;
 	case WM_SIZE: {
 		if (wparam != SIZE_MINIMIZED) {
 			uint32_t new_width = LOWORD(lparam);

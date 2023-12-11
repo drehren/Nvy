@@ -24,6 +24,7 @@ Nvy can be started with the following flags:
 - `--disable-ligatures` to disable font ligatures
 - `--disable-fullscreen` to disable toggling fullscreen with Alt+Enter
 - `--linespace-factor=<float>` to scale the line spacing by a floating point factor, e.g. `--linespace-factor=1.2`
+- `--opacity=<float>` to enable and make the window translucent, e.g. `--opacity=0.5` will make the window 50% transparent
 
 ## Extra Features
 

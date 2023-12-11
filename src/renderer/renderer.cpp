@@ -548,7 +548,7 @@ void ApplyHighlightAttributes(Renderer *renderer, HighlightAttributes *hl_attrib
 
 void DrawBackgroundRect(Renderer *renderer, D2D1_RECT_F rect, HighlightAttributes *hl_attribs) {
 	HighlightColor color = CreateBackgroundColor(renderer, hl_attribs);
-	float	alpha = (color.none ? 1.0f : (100 - hl_attribs->blend) / 100.f) * renderer->opacity;
+	float alpha = color.none ? renderer->opacity : (100 - hl_attribs->blend) / 100.f;
 	float red = color.r * alpha / 255;
 	float green = color.g * alpha / 255;
 	float blue = color.b * alpha / 255;

@@ -29,7 +29,7 @@ void InitializeD3D(Renderer *renderer) {
 		D3D_FEATURE_LEVEL_9_1 
 	};
 	WIN_CHECK(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, feature_levels,
-		ARRAYSIZE(feature_levels), D3D11_SDK_VERSION, &temp_device, &renderer->d3d_feature_level, &temp_context));
+	ARRAYSIZE(feature_levels), D3D11_SDK_VERSION, &temp_device, &renderer->d3d_feature_level, &temp_context));
 	WIN_CHECK(temp_device->QueryInterface(__uuidof(ID3D11Device2), reinterpret_cast<void **>(&renderer->d3d_device)));
 	WIN_CHECK(temp_context->QueryInterface(__uuidof(ID3D11DeviceContext2), reinterpret_cast<void **>(&renderer->d3d_context)));
 
@@ -37,7 +37,7 @@ void InitializeD3D(Renderer *renderer) {
 	WIN_CHECK(renderer->d3d_device->QueryInterface(__uuidof(IDXGIDevice3), reinterpret_cast<void **>(&dxgi_device)));
 	WIN_CHECK(renderer->d2d_factory->CreateDevice(dxgi_device, &renderer->d2d_device));
 	WIN_CHECK(renderer->d2d_device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_ENABLE_MULTITHREADED_OPTIMIZATIONS, &renderer->d2d_context));
-	WIN_CHECK(renderer->d2d_context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &renderer->d2d_background_rect_brush));
+	WIN_CHECK(renderer->d2d_context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black, renderer->opacity), &renderer->d2d_background_rect_brush));
 
 	SafeRelease(&dxgi_device);
 }
@@ -52,6 +52,9 @@ void InitializeDWrite(Renderer *renderer) {
 		}));
 	}
 }
+void ClearBackground(Renderer *renderer);
+void DrawAllGridLines(Renderer *renderer);
+void DrawCursor(Renderer *renderer);
 
 void HandleDeviceLost(Renderer *renderer);
 void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint32_t height) {
@@ -94,9 +97,9 @@ void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint
 			},
 			.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
 			.BufferCount = 2,
-			.Scaling = DXGI_SCALING_NONE,
+			.Scaling = DXGI_SCALING_STRETCH,
 			.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-			.AlphaMode = DXGI_ALPHA_MODE_IGNORE,
+			.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED,
 			.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
 		};
 
@@ -108,8 +111,8 @@ void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint
 		WIN_CHECK(dxgi_adapter->GetParent(IID_PPV_ARGS(&dxgi_factory)));
 
 		IDXGISwapChain1 *dxgi_swapchain_temp;
-		WIN_CHECK(dxgi_factory->CreateSwapChainForHwnd(renderer->d3d_device,
-			renderer->hwnd, &swapchain_desc, nullptr, nullptr, &dxgi_swapchain_temp));
+		WIN_CHECK(dxgi_factory->CreateSwapChainForComposition(renderer->d3d_device,
+			 &swapchain_desc, nullptr, &dxgi_swapchain_temp));
 		WIN_CHECK(dxgi_factory->MakeWindowAssociation(renderer->hwnd, DXGI_MWA_NO_ALT_ENTER));
 		WIN_CHECK(dxgi_swapchain_temp->QueryInterface(__uuidof(IDXGISwapChain2), 
 					reinterpret_cast<void **>(&renderer->dxgi_swapchain)));
@@ -117,6 +120,22 @@ void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint
 		WIN_CHECK(renderer->dxgi_swapchain->SetMaximumFrameLatency(1));
 		renderer->swapchain_wait_handle = renderer->dxgi_swapchain->GetFrameLatencyWaitableObject();
 
+		// get the composition device
+		IDCompositionDevice *dcomp_device;
+		WIN_CHECK(DCompositionCreateDevice2(renderer->d2d_device, IID_PPV_ARGS(&dcomp_device)));
+
+		WIN_CHECK(dcomp_device->CreateTargetForHwnd(renderer->hwnd, TRUE, &renderer->dcomp_target));
+
+		IDCompositionVisual *dcomp_visual;
+		WIN_CHECK(dcomp_device->CreateVisual(&dcomp_visual));
+
+		WIN_CHECK(renderer->dcomp_target->SetRoot(dcomp_visual));
+
+		WIN_CHECK(dcomp_visual->SetContent(renderer->dxgi_swapchain));
+		WIN_CHECK(dcomp_device->Commit());
+
+		SafeRelease(&dcomp_visual);
+		SafeRelease(&dcomp_device);
 		SafeRelease(&dxgi_swapchain_temp);
 		SafeRelease(&dxgi_device);
 		SafeRelease(&dxgi_adapter);
@@ -126,7 +145,7 @@ void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint
 	constexpr D2D1_BITMAP_PROPERTIES1 target_bitmap_properties {
 		.pixelFormat = D2D1_PIXEL_FORMAT {
 			.format = DXGI_FORMAT_B8G8R8A8_UNORM,
-			.alphaMode = D2D1_ALPHA_MODE_IGNORE
+			.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED
 		},
 		.dpiX = DEFAULT_DPI,
 		.dpiY = DEFAULT_DPI,
@@ -140,6 +159,17 @@ void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint
 		&renderer->d2d_target_bitmap
 	));
 	renderer->d2d_context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+	renderer->d2d_context->SetTarget(renderer->d2d_target_bitmap);
+	renderer->d2d_context->SetTransform(D2D1::IdentityMatrix());
+
+	renderer->d2d_context->BeginDraw();
+	ClearBackground(renderer);
+	DrawAllGridLines(renderer);
+	if(!renderer->ui_busy) {
+		DrawCursor(renderer);
+	}
+	renderer->d2d_context->EndDraw();
+	renderer->dxgi_swapchain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
 
 	SafeRelease(&dxgi_backbuffer);
 }
@@ -147,6 +177,7 @@ void InitializeWindowDependentResources(Renderer *renderer, uint32_t width, uint
 void HandleDeviceLost(Renderer *renderer) {
 	SafeRelease(&renderer->d3d_device);
 	SafeRelease(&renderer->d3d_context);
+	SafeRelease(&renderer->dcomp_target);
 	SafeRelease(&renderer->dxgi_swapchain);
 	SafeRelease(&renderer->d2d_factory);
 	SafeRelease(&renderer->d2d_device);
@@ -199,6 +230,7 @@ void RendererAttach(Renderer *renderer) {
 void RendererShutdown(Renderer *renderer) {
 	SafeRelease(&renderer->d3d_device);
 	SafeRelease(&renderer->d3d_context);
+	SafeRelease(&renderer->dcomp_target);
 	SafeRelease(&renderer->dxgi_swapchain);
 	SafeRelease(&renderer->d2d_factory);
 	SafeRelease(&renderer->d2d_device);
@@ -382,6 +414,16 @@ bool RendererUpdateFont(Renderer *renderer, float font_size, const char *font_st
 	return UpdateFontMetrics(renderer, font_size, font_string, strlen);
 }
 
+HighlightColor ColorFromNode(mpack_node_t color_node) {
+	uint32_t color = mpack_node_u32(color_node);
+	return {
+		.b = static_cast<uint8_t>((color >> 0) & 0xff),
+		.g = static_cast<uint8_t>((color >> 8) & 0xff),
+		.r = static_cast<uint8_t>((color >> 16) & 0xff),
+		.none = false,
+	};
+}
+
 void UpdateDefaultColors(Renderer *renderer, mpack_node_t default_colors) {
 	size_t default_colors_arr_length = mpack_node_array_length(default_colors);
 
@@ -389,9 +431,12 @@ void UpdateDefaultColors(Renderer *renderer, mpack_node_t default_colors) {
 		mpack_node_t color_arr = mpack_node_array_at(default_colors, i);
 
 		// Default colors occupy the first index of the highlight attribs array
-		renderer->hl_attribs[0].foreground = static_cast<uint32_t>(mpack_node_array_at(color_arr, 0).data->value.u);
-		renderer->hl_attribs[0].background = static_cast<uint32_t>(mpack_node_array_at(color_arr, 1).data->value.u);
-		renderer->hl_attribs[0].special = static_cast<uint32_t>(mpack_node_array_at(color_arr, 2).data->value.u);
+		renderer->hl_attribs[0].foreground = ColorFromNode(mpack_node_array_at(color_arr, 0));
+		renderer->hl_attribs[0].background = ColorFromNode(mpack_node_array_at(color_arr, 1));
+		if (ColorToRGB(renderer->hl_attribs[0].background) == 0 && renderer->opacity < 1.0) {
+			renderer->hl_attribs[0].background.none = true;
+		}
+		renderer->hl_attribs[0].special = ColorFromNode(mpack_node_array_at(color_arr, 2));
 		renderer->hl_attribs[0].flags = 0;
 	}
 }
@@ -404,18 +449,26 @@ void UpdateHighlightAttributes(Renderer *renderer, mpack_node_t highlight_attrib
 
 		mpack_node_t attrib_map = mpack_node_array_at(mpack_node_array_at(highlight_attribs, i), 1);
 
-		const auto SetColor = [&](const char *name, uint32_t *color) {
+		const auto SetColor = [&](const char *name, HighlightColor *color) {
 			mpack_node_t color_node = mpack_node_map_cstr_optional(attrib_map, name);
 			if (!mpack_node_is_missing(color_node)) {
-				*color = static_cast<uint32_t>(color_node.data->value.u);
+				*color = ColorFromNode(color_node);
 			}
 			else {
-				*color = DEFAULT_COLOR;
+				color->none = true;
 			}
 		};
 		SetColor("foreground", &renderer->hl_attribs[attrib_index].foreground);
 		SetColor("background", &renderer->hl_attribs[attrib_index].background);
 		SetColor("special", &renderer->hl_attribs[attrib_index].special);
+		{
+			mpack_node_t blend_node = mpack_node_map_cstr_optional(attrib_map, "blend");
+			if (!mpack_node_is_missing(blend_node)) {
+				renderer->hl_attribs[attrib_index].blend = mpack_node_u16(blend_node);
+			} else {
+				renderer->hl_attribs[attrib_index].blend = 0;
+			}
+		}
 
 		const auto SetFlag = [&](const char *flag_name, HighlightAttributeFlags flag) {
 			mpack_node_t flag_node = mpack_node_map_cstr_optional(attrib_map, flag_name);
@@ -437,33 +490,37 @@ void UpdateHighlightAttributes(Renderer *renderer, mpack_node_t highlight_attrib
 	}
 }
 
-uint32_t CreateForegroundColor(Renderer *renderer, HighlightAttributes *hl_attribs) {
-	if (hl_attribs->flags & HL_ATTRIB_REVERSE) {
-		return hl_attribs->background == DEFAULT_COLOR ? renderer->hl_attribs[0].background : hl_attribs->background;
-	}
-	else {
-		return hl_attribs->foreground == DEFAULT_COLOR ? renderer->hl_attribs[0].foreground : hl_attribs->foreground;
-	}
+HighlightColor CreateForegroundColor(Renderer *renderer, HighlightAttributes *hl_attribs) {
+	auto getter = hl_attribs->flags & HL_ATTRIB_REVERSE
+		? &HighlightAttributes::background
+		: &HighlightAttributes::foreground;
+	return std::invoke(getter, hl_attribs).none
+		? std::invoke(getter, renderer->hl_attribs[0])
+		: std::invoke(getter, hl_attribs);
 }
 
-uint32_t CreateBackgroundColor(Renderer *renderer, HighlightAttributes *hl_attribs) {
-	if (hl_attribs->flags & HL_ATTRIB_REVERSE) {
-		return hl_attribs->foreground == DEFAULT_COLOR ? renderer->hl_attribs[0].foreground : hl_attribs->foreground;
-	}
-	else {
-		return hl_attribs->background == DEFAULT_COLOR ? renderer->hl_attribs[0].background : hl_attribs->background;
-	}
+HighlightColor CreateBackgroundColor(Renderer *renderer, HighlightAttributes *hl_attribs) {
+	auto getter = hl_attribs->flags & HL_ATTRIB_REVERSE
+		? &HighlightAttributes::foreground
+		: &HighlightAttributes::background;
+	return std::invoke(getter, hl_attribs).none
+		? std::invoke(getter, renderer->hl_attribs[0])
+		: std::invoke(getter, hl_attribs);
 }
 
-uint32_t CreateSpecialColor(Renderer *renderer, HighlightAttributes *hl_attribs) {
-	return hl_attribs->special == DEFAULT_COLOR ? renderer->hl_attribs[0].special : hl_attribs->special;
+HighlightColor CreateSpecialColor(Renderer *renderer, HighlightAttributes *hl_attribs) {
+	return hl_attribs->special.none ? renderer->hl_attribs[0].special : hl_attribs->special;
+}
+
+uint32_t ColorToRGB(HighlightColor color) {
+	return color.none ? 0 : (color.r << 16 | color.g << 8 | color.b); 
 }
 
 void ApplyHighlightAttributes(Renderer *renderer, HighlightAttributes *hl_attribs,
 	IDWriteTextLayout *text_layout, int start, int end) {
 	GlyphDrawingEffect *drawing_effect = new GlyphDrawingEffect(
-			CreateForegroundColor(renderer, hl_attribs),
-			CreateSpecialColor(renderer, hl_attribs)
+			ColorToRGB(CreateForegroundColor(renderer, hl_attribs)),
+			ColorToRGB(CreateSpecialColor(renderer, hl_attribs))
 	);
 	DWRITE_TEXT_RANGE range {
 		.startPosition = static_cast<uint32_t>(start),
@@ -490,8 +547,13 @@ void ApplyHighlightAttributes(Renderer *renderer, HighlightAttributes *hl_attrib
 }
 
 void DrawBackgroundRect(Renderer *renderer, D2D1_RECT_F rect, HighlightAttributes *hl_attribs) {
-	uint32_t color = CreateBackgroundColor(renderer, hl_attribs);
-	renderer->d2d_background_rect_brush->SetColor(D2D1::ColorF(color));
+	HighlightColor color = CreateBackgroundColor(renderer, hl_attribs);
+	float	alpha = (color.none ? 1.0f : (100 - hl_attribs->blend) / 100.f) * renderer->opacity;
+	float red = color.r * alpha / 255;
+	float green = color.g * alpha / 255;
+	float blue = color.b * alpha / 255;
+
+	renderer->d2d_background_rect_brush->SetColor(D2D1::ColorF(red, green, blue, alpha));
 
 	renderer->d2d_context->FillRectangle(rect, renderer->d2d_background_rect_brush);
 }
@@ -543,6 +605,10 @@ void DrawGridLine(Renderer *renderer, int row) {
 		.right = renderer->grid_cols * renderer->font_width,
 		.bottom = (row * renderer->font_height) + renderer->font_height
 	};
+	// Clear the whole line before start
+	renderer->d2d_context->PushAxisAlignedClip(&rect, D2D1_ANTIALIAS_MODE_ALIASED);
+	renderer->d2d_context->Clear(NULL); // clear transparent black
+	renderer->d2d_context->PopAxisAlignedClip();
 
 	IDWriteTextLayout *temp_text_layout = nullptr;
 	ConvertToWide(renderer, &renderer->grid_chars[base], renderer->grid_cols);
@@ -554,7 +620,7 @@ void DrawGridLine(Renderer *renderer, int row) {
 		rect.bottom - rect.top,
 		&temp_text_layout
 	));
-    size_t grid_chars_length = renderer->wchar_buffer_length;
+  size_t grid_chars_length = renderer->wchar_buffer_length;
 	IDWriteTextLayout1 *text_layout;
 	temp_text_layout->QueryInterface<IDWriteTextLayout1>(&text_layout);
 	temp_text_layout->Release();
@@ -971,29 +1037,8 @@ void ScrollRegion(Renderer *renderer, mpack_node_t scroll_region) {
 	}
 }
 
-void DrawBorderRectangles(Renderer *renderer) {
-	float left_border = renderer->font_width * renderer->grid_cols;
-	float top_border = renderer->font_height * renderer->grid_rows;
-
-	if(left_border != static_cast<float>(renderer->pixel_size.width)) {
-		D2D1_RECT_F vertical_rect {
-			.left = left_border,
-			.top = 0.0f,
-			.right = static_cast<float>(renderer->pixel_size.width),
-			.bottom = static_cast<float>(renderer->pixel_size.height)
-		};
-		DrawBackgroundRect(renderer, vertical_rect, &renderer->hl_attribs[0]);
-	}
-
-	if(top_border != static_cast<float>(renderer->pixel_size.height)) {
-		D2D1_RECT_F horizontal_rect {
-			.left = 0.0f,
-			.top = top_border,
-			.right = static_cast<float>(renderer->pixel_size.width),
-			.bottom = static_cast<float>(renderer->pixel_size.height)
-		};
-		DrawBackgroundRect(renderer, horizontal_rect, &renderer->hl_attribs[0]);
-	}
+void ClearBackground(Renderer *renderer) {
+	renderer->d2d_context->Clear(D2D1::ColorF(0, renderer->opacity));
 }
 
 bool RendererUpdateGuiFont(Renderer *renderer, const char *guifont, size_t strlen) {
@@ -1076,9 +1121,7 @@ void StartDraw(Renderer *renderer) {
 			true
 		);
 
-		renderer->d2d_context->SetTarget(renderer->d2d_target_bitmap);
 		renderer->d2d_context->BeginDraw();
-		renderer->d2d_context->SetTransform(D2D1::IdentityMatrix());
 		renderer->draw_active = true;
 	}
 }
@@ -1176,13 +1219,13 @@ void RendererRedraw(Renderer *renderer, mpack_node_t params, bool start_maximize
 
 			if (renderer->draws_invalidated) {
 				renderer->draws_invalidated = false;
+				ClearBackground(renderer);
 				DrawAllGridLines(renderer);
 			}
 
 			if(!renderer->ui_busy) {
 				DrawCursor(renderer);
 			}
-			DrawBorderRectangles(renderer);
 			FinishDraw(renderer);
 		}
 	}

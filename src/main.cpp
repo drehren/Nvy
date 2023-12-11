@@ -111,6 +111,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 			uint32_t new_height = HIWORD(lparam);
 			context->saved_window_height = new_height;
 			context->saved_window_width = new_width;
+			if (context->renderer->pixel_size.width != new_width ||
+				context->renderer->pixel_size.height != new_height) {
+				auto [rows, cols] = RendererPixelsToGridSize(context->renderer, new_width, new_height);
+				RendererResize(context->renderer, new_width, new_height);
+				SendResizeIfNecessary(context, rows, cols);
+			}
 		}
 	} return 0;
 	case WM_DPICHANGED: {
@@ -384,6 +390,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 	bool disable_ligatures = false;
     bool disable_fullscreen = false;
 	float linespace_factor = 1.0f;
+	float opacity = 1.0f;
 	int64_t start_rows = 0;
 	int64_t start_cols = 0;
 	int64_t start_pos_x = CW_USEDEFAULT;
@@ -425,6 +432,12 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 			if(factor > 0.0f && factor < 20.0f) {
 				linespace_factor = factor;
 			}
+		} else if (!wcsncmp(cmd_line_args[i], L"--opacity=", wcslen(L"--opacity="))) {
+			wchar_t *end_ptr;
+			float value = wcstof(&cmd_line_args[i][10], &end_ptr);
+			if (value >= 0.0f && value <= 1.0f) {
+				opacity = value;
+			}
 		}
 		// Otherwise assume the argument is a filename to open
 		else {
@@ -453,7 +466,9 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 	}
 
 	Nvim nvim {};
-	Renderer renderer {};
+	Renderer renderer {
+		.opacity = opacity
+	};
 	Context context {
 		.start_maximized = start_maximized,
 		.start_fullscreen = start_fullscreen,
@@ -464,7 +479,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 	};
 
 	HWND hwnd = CreateWindowEx(
-		WS_EX_ACCEPTFILES,
+		WS_EX_ACCEPTFILES | WS_EX_NOREDIRECTIONBITMAP,
 		window_class_name,
 		window_title,
 		WS_OVERLAPPEDWINDOW,
@@ -535,16 +550,6 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev_instance, _
 	while (GetMessage(&msg, 0, 0, 0)) {
 		// TranslateMessage(&msg);
 		DispatchMessage(&msg);
-
-		if (renderer.draw_active) continue;
-
-		if (previous_width != context.saved_window_width || previous_height != context.saved_window_height) {
-			previous_width = context.saved_window_width;
-			previous_height = context.saved_window_height;
-			auto [rows, cols] = RendererPixelsToGridSize(context.renderer, context.saved_window_width, context.saved_window_height);
-			RendererResize(context.renderer, context.saved_window_width, context.saved_window_height);
-			SendResizeIfNecessary(&context, rows, cols);
-		}
 	}
 
 	RendererShutdown(&renderer);

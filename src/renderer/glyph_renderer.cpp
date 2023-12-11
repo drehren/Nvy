@@ -42,7 +42,8 @@ HRESULT GlyphRenderer::DrawGlyphRun(void *client_drawing_context, float baseline
 		SafeRelease(&drawing_effect);
 	}
 	else {
-		drawing_effect_brush->SetColor(D2D1::ColorF(renderer->hl_attribs[0].foreground));
+		auto color = ColorToRGB(renderer->hl_attribs[0].foreground);
+		drawing_effect_brush->SetColor(D2D1::ColorF(color));
 	}
 
 	DWRITE_GLYPH_IMAGE_FORMATS supported_formats =
@@ -170,7 +171,9 @@ HRESULT GlyphRenderer::DrawLine(void *client_drawing_context, float baseline_ori
 		SafeRelease(&drawing_effect);
 	}
 	else {
-		uint32_t line_color = use_special_color ? renderer->hl_attribs[0].special : renderer->hl_attribs[0].foreground;
+		uint32_t line_color = use_special_color ? 
+			ColorToRGB(renderer->hl_attribs[0].special) :
+			ColorToRGB(renderer->hl_attribs[0].foreground);
 		temp_brush->SetColor(D2D1::ColorF(line_color));
 	} 
 
